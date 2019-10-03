@@ -12,10 +12,14 @@ inline int li2(int w, int j, int numItems) {return j+w*(numItems);}
 
 void build_table(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W);
 int compute_table(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W);
+void build_table_parallel(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W);
+int compute_table_parallel(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W);
 void backtrack(const vector<int>& K, const vector<int>& wts, vector<bool>& used, int W);
 void backtrack_implicit(vector<int>&K, vector<int>&M, const vector<int>& wts, const vector<int>& vals, int W, 
                         int first, int last, vector<int>& path);
 int findk(vector<int>&K, vector<int>&M, const vector<int>& wts, const vector<int>& vals, int W, 
+                        int first, int last);
+int findk_parallel(vector<int>&K, vector<int>&M, const vector<int>& wts, const vector<int>& vals, int W, 
                         int first, int last);
 int convert_path_to_used(vector<bool>& used, const vector<int>& path, const vector<int>& vals, int W);
 
@@ -62,10 +66,8 @@ int main(int argc, char* argv[]) {
     vector<int> table(nitems*(capacity+1));
 
     // run algorithm
-    build_table(table, weight, value, capacity);
-    // cout << "Build Table Done\n";
+    build_table_parallel(table, weight, value, capacity);
     backtrack(table, weight, used, capacity);
-    // cout << "Backtrack Done\n";
 
     seconds[0] = omp_get_wtime() - tic;
 
@@ -80,7 +82,7 @@ int main(int argc, char* argv[]) {
     vector<int> table2(2*(capacity+1));
 
     // run algorithm
-    int knapsackValue = compute_table(table2, weight, value, capacity);
+    int knapsackValue = compute_table_parallel(table2, weight, value, capacity);
 
     seconds[1] = omp_get_wtime() - tic;;
 
@@ -104,11 +106,9 @@ int main(int argc, char* argv[]) {
     seconds[2] = omp_get_wtime() - tic;;
 
     // check mem ineff value against mem eff value
-    // cout << table.back() << ' ' << knapsackValue << "\n";
     assert(table.back() == knapsackValue);
 
     // check mem ineff solution against mem eff solution
-    // cout << "used: " << used << " used2: " << used2 << endl;
     assert(table.back() == knapsackValue2);
     assert(used == used2);
 
@@ -122,7 +122,33 @@ int main(int argc, char* argv[]) {
 void build_table(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W) {
 
     int w, j, numItems = wts.size();
-    // cout << w << ' ' << j << ' ' << numItems << ' ' << W << "\n";
+
+    // initialize first column
+    for(w = 0; w <= W; w++) {
+        if( w < wts[0]) {
+            K[w] = 0;
+        } else {
+            K[w] = vals[0];
+        }
+    }
+
+    // loop over 2D table
+    for(w = 0; w <= W; w++) {
+        for(j = 1; j < numItems; j++) {
+            // if item doesn't fit or not including it is better
+            if(w < wts[j] || K[li(w,j-1,W)] >= vals[j] + K[li(w-wts[j],j-1,W)]) {
+                K[li(w,j,W)] = K[li(w,j-1,W)];
+            } else { // else including it is better
+                K[li(w,j,W)] = vals[j] + K[li(w-wts[j],j-1,W)];
+            }
+        }
+    }
+
+}
+
+void build_table_parallel(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W) {
+
+    int w, j, numItems = wts.size();
     // initialize first column
     for(w = 0; w <= W; w++) {
         if( w < wts[0]) {
@@ -136,7 +162,6 @@ void build_table(vector<int>& K, const vector<int>& wts, const vector<int>& vals
         for(j = 1; j < numItems; j++) {
             #pragma omp parallel for
             for(w = 0; w <= W; w++) {
-                // cout << omp_get_num_threads() << endl;
                 // if item doesn't fit or not including it is better
                 if(w < wts[j] || K[li(w,j-1,W)] >= vals[j] + K[li(w-wts[j],j-1,W)]) {
                     K[li(w,j,W)] = K[li(w,j-1,W)];
@@ -145,17 +170,6 @@ void build_table(vector<int>& K, const vector<int>& wts, const vector<int>& vals
                 }
             }
         }
-    // for(w = 0; w <= W; w++) {
-    //     for(j = 1; j < numItems; j++) {
-    //         // if item doesn't fit or not including it is better
-    //         if(w < wts[j] || K[li2(w,j-1,numItems)] >= vals[j] + K[li2(w-wts[j],j-1,numItems)]) {
-    //             K[li2(w,j,numItems)] = K[li2(w,j-1,numItems)];
-    //         } else { // else including it is better
-    //             K[li2(w,j,numItems)] = vals[j] + K[li2(w-wts[j],j-1,numItems)];
-    //         }
-    //     }
-    // }
-
 }
 
 void backtrack(const vector<int>& K, const vector<int>& wts, vector<bool>& used, int W) {
@@ -171,19 +185,45 @@ void backtrack(const vector<int>& K, const vector<int>& wts, vector<bool>& used,
             w -= wts[j];
         }
     }
-    // for(j = n-1; j > 0; j--) {
-    //     // see if item is used
-    //     used[j] = (K[li2(w,j,n)] != K[li2(w,j-1,n)]);
-    //     // if so decrease remaining capacity
-    //     if(used[j]) {
-    //         w -= wts[j];
-    //     }
-    // }
     // see if first item is used
     used[0] = (w >= wts[0]);
 }
 
 int compute_table(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W) {
+    
+    int w, j, numItems = wts.size(), curr, prev;
+
+    // initialize first column
+    for(w = 0; w <= W; w++) {
+        if(w < wts[0]) {
+            K[w] = 0;
+        } else {
+            K[w] = vals[0];
+        }
+    }
+
+    // loop over columns of implicit 2D table
+    for(j = 1; j < numItems; j++) {
+        // switch curr and prev columns each iteration to avoid copy
+        curr = j%2;
+        prev = (j+1)%2;
+        for(w = 0; w <= W; w++) {
+            // if item doesn't fit or not including it is better
+            if(w < wts[j] || K[li(w,prev,W)] >= vals[j] + K[li(w-wts[j],prev,W)]) {
+                K[li(w,curr,W)] = K[li(w,prev,W)];
+            // else including it is better
+            } else {
+                K[li(w,curr,W)] = vals[j] + K[li(w-wts[j],prev,W)];
+            }
+        }
+    }
+    
+    // return last entry in current column
+    return K[li(W,curr,W)];
+
+}
+
+int compute_table_parallel(vector<int>& K, const vector<int>& wts, const vector<int>& vals, int W) {
     
     int w, j, numItems = wts.size(), curr, prev;
 
@@ -225,7 +265,7 @@ void backtrack_implicit(vector<int>&K, vector<int>&M, const vector<int>& wts, co
 
     // recursive case
     int mid = (first+last) / 2;
-    int k = findk(K,M,wts,vals,W,first,last);
+    int k = findk_parallel(K,M,wts,vals,W,first,last);
     // set middle element of path
     if(first) {
         // need to offset based on capacity already used
@@ -239,6 +279,55 @@ void backtrack_implicit(vector<int>&K, vector<int>&M, const vector<int>& wts, co
 }
 
 int findk(vector<int>&K, vector<int>&M, const vector<int>& wts, const vector<int>& vals, int W, 
+                        int first, int last) {
+    
+    int w, j, numItems = last-first+1, mid = (first+last) / 2, curr, prev;
+
+    // initialize columns for 1st and mid element
+    for(w = 0; w <= W; w++) {
+        if(w < wts[first]) {
+            K[li(w,first%2,W)] = 0;
+            M[li(w,mid%2,W)] = w;
+        } else {
+            K[li(w,first%2,W)] = vals[first];
+            M[li(w,mid%2,W)] = w;
+        }
+    }
+
+    // loop from 2nd element to last
+    for(j = first+1; j <= last; j++) {
+        // switch curr and prev columns each iteration to avoid copy
+        curr = j%2;
+        prev = (j+1)%2;
+
+        for(w = 0; w <= W; w++) {
+        
+            // if item doesn't fit or not including it is better
+            if(w < wts[j] || K[li(w,prev,W)] >= vals[j] + K[li(w-wts[j],prev,W)]) {
+                K[li(w,curr,W)] = K[li(w,prev,W)];
+                // update midpoint value
+                if(j > mid) {
+                    M[li(w,curr,W)] = M[li(w,prev,W)];
+                }
+            }
+            // else including it is better
+            else {
+                K[li(w,curr,W)] = vals[j] + K[li(w-wts[j],prev,W)];
+                // update midpt value
+                if(j > mid) {
+                    M[li(w,curr,W)] = M[li(w-wts[j],prev,W)];
+                }
+            }
+        }
+    }
+
+    // return last element in current column 
+    // (value is row index of path through middle column)
+    return M[li(W,curr,W)];
+
+}
+
+int findk_parallel(vector<int>&K, vector<int>&M, const vector<int>& wts, const vector<int>& vals, int W, 
                         int first, int last) {
     
     int w, j, numItems = last-first+1, mid = (first+last) / 2, curr, prev;
@@ -297,15 +386,12 @@ int convert_path_to_used(vector<bool>& used, const vector<int>& path, const vect
         kValue += vals[n-1];
     }
     // handle other items
-    // #pragma omp parallel for
     for(int j = n-2; j > 0; j--) {
         // if capacity index didn't change, we didn't include item
         if(path[j] == path[j-1]) {
-            // #pragma omp critical
             used[j] = false;
         // else we included it, count up its value
         } else {
-            // #pragma omp critical
             used[j] = true;
             kValue += vals[j];
         }
